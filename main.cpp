@@ -19,14 +19,17 @@
 #include <pthread.h> // Cancelacion de hilos
 
 #include <atomic>
+#include <csignal> 
+#include <unistd.h>        // para getopt(), optarg, optind, …
+#include <vector>
 
 #include "socket.hpp"
 
 std::string comando;
 sockaddr_in local_ip;
 sockaddr_in dest_ip;
-// FLAGS
 
+// FLAGS
 std::atomic<bool> quit(false);
 bool server_mode = false;
 bool client_mode = false;
@@ -37,7 +40,7 @@ void thread_send(std::exception_ptr& eptr) {     // Función de los hilos.
         
         while (comando != "/quit") {
             std::cin >> comando;
-            std::cout << "comando: " << comando;
+            //std::cout << "comando: " << comando;
           
             local_ip = make_ip_address("127.0.0.1", 5000);
             dest_ip = make_ip_address("127.0.0.1", 5001);
@@ -77,13 +80,9 @@ void thread_send(std::exception_ptr& eptr) {     // Función de los hilos.
 void thread_recv(std::exception_ptr& eptr) {     
 
     try {
-
-
+        
         while (comando != "/quit") {
-            //std::getline(std::cin, comando);
-              if (comando == "/quit") {
-                std::cout << "HEY";
-            }
+            
             local_ip = make_ip_address("127.0.0.1", 5001);
             dest_ip = make_ip_address("127.0.0.1", 5000);
 
@@ -97,8 +96,8 @@ void thread_recv(std::exception_ptr& eptr) {
     
             std::cout << "El sistema " << remote_ip << ":" << remote_port << " envió el mensaje:\n" << message.text.data() << std::endl;
         }
-        
     }
+        
     catch (const std::exception& e) {
         eptr = std::current_exception();
  
@@ -106,14 +105,91 @@ void thread_recv(std::exception_ptr& eptr) {
     quit = true;
 }
 
-void request_cancellation(std::thread& thread){
+void request_cancellation(std::thread& thread) {
 
     pthread_cancel(thread.native_handle());
 }
 
+void int_signal_handler(int signum) {
+    if (signum == SIGINT) {
+        write(1, "¡Señal SIGINT interceptada!\n", 31);
+        quit = true;
+    }
+    if (signum == SIGTERM) {
+        write(1, "¡Señal SIGTERM, se ha apagado el sistema!\n", 45);
+        quit = true;
+    }
+    if (signum == SIGHUP) {
+        write(1, "¡Señal SIGHUP, se ha cerrado la terminal!\n", 45);
+        quit = true;
+    }
+}
+
+struct CommandLineArguments
+{
+bool show_help = false;
+bool server_mode = false;
+    unsigned short conn_port = 0;
+std::vector<std::string> other_arguments;
+
+CommandLineArguments(int argc, char* argv[]);
+};
+
+CommandLineArguments::CommandLineArguments(int argc, char *argv[]) {
+ 
+    int c;
+    while ((c = getopt(argc, argv, "hsp:01")) != -1) {
+    
+        switch (c) {
+        
+            case '0':
+            
+            case '1':
+                std::cerr << "Opción: " << c << std::endl;
+                break;
+
+            case 'h':
+                std::cerr << "opción h\n";
+                show_help = true;
+                break;
+            
+            case 's':
+                std::cerr << "opción s\n";
+                server_mode = true;
+                break;
+            
+            case 'p':
+                std::cerr << "Opción p con valor " << optarg << std::endl; 
+                conn_port = std::atoi(optarg);
+                break;
+            
+            case '?':
+                throw std::invalid_argument("Argumento de línea de comandos desconocido.");
+            
+            default:
+                throw std::runtime_error("Error procesando la línea de comandos");
+
+           
+        }
+    }
+       
+    if (optind < argc) {
+        std::cerr << "-- empezamos con los argumentos no opción --\n";
+        for (; optind < argc; ++optind) {
+            std::cerr << "argv[" << optind << "]: " << argv[optind] << '\n';
+            other_arguments.push_back(argv[optind]);
+        }
+    }   
+}
+
+
+
 int protected_main(int argc, char* argv[]) {
 
-    
+    std::signal(SIGINT, &int_signal_handler);
+    std::signal(SIGTERM, &int_signal_handler);
+    std::signal(SIGHUP, &int_signal_handler);
+
     std::exception_ptr eptr1 {};
     std::exception_ptr eptr2 {};
     std::thread hilo_envio(&thread_send, std::ref(eptr1));
@@ -139,6 +215,8 @@ int protected_main(int argc, char* argv[]) {
 int main(int argc, char* argv[]) {
 
     try {
+        
+        CommandLineArguments arguments(argc, argv);
         return protected_main(argc, argv);
     }
 
