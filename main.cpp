@@ -5,41 +5,156 @@
 #include <netinet/ip.h>
 #include <array>
 #include <arpa/inet.h>
+#include <thread> // Libreria de hilos
+#include <exception> // libreria de excepciones
 
+#include <cerrno>
+#include <cstring>
+
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <pthread.h> // Cancelacion de hilos
+
+#include <atomic>
 
 #include "socket.hpp"
 
+std::string comando;
+sockaddr_in local_ip;
+sockaddr_in dest_ip;
+// FLAGS
 
-int main() {
+std::atomic<bool> quit(false);
+bool server_mode = false;
+bool client_mode = false;
+
+void thread_send(std::exception_ptr& eptr) {     // Función de los hilos.
+
+    try {
+        
+        while (comando != "/quit") {
+            std::cin >> comando;
+            std::cout << "comando: " << comando;
+          
+            local_ip = make_ip_address("127.0.0.1", 5000);
+            dest_ip = make_ip_address("127.0.0.1", 5001);
+
+            int contenido = 1;
+            char buffer[1024]; 
+            Message message;
+            Socket socket(local_ip);
+            const char* filename = "fichero.txt";
+
+            int fd = open(filename, O_RDONLY); // Abrimos el fichero para lectura y escritura 
+    
+            if( fd == -1 ) {
+                std::cerr << "No se ha podido abrir el fichero" << std::strerror(errno) << '\n';
+                comando = "/quit";
+            }
+            while (contenido != 0 && comando != "/quit") {
+                
+                contenido = read(fd, buffer, 1023);
+                std::string string_contenido(buffer); // Convertimos el char * en string
+                string_contenido.copy(message.text.data(), message.text.size() - 1, 0); // Copiamos los atributos del string hacia nuestra estructura Message
+                socket.send_to(message, dest_ip);
+                
+            }
+            
+            close(fd);
+        }
+        
+    }
+    catch (const std::exception& e) {
+        eptr = std::current_exception();
+ 
+    }
+    quit = true;
+}
+
+void thread_recv(std::exception_ptr& eptr) {     
+
+    try {
+
+
+        while (comando != "/quit") {
+            //std::getline(std::cin, comando);
+              if (comando == "/quit") {
+                std::cout << "HEY";
+            }
+            local_ip = make_ip_address("127.0.0.1", 5001);
+            dest_ip = make_ip_address("127.0.0.1", 5000);
+
+            Socket socket(local_ip);
+            Message message;
+    
+            socket.receive_from(message, dest_ip);
+    
+            char *remote_ip = inet_ntoa(dest_ip.sin_addr); // Ip desde la que se ha enviado el mensaje
+            int remote_port = ntohs(dest_ip.sin_port);
+    
+            std::cout << "El sistema " << remote_ip << ":" << remote_port << " envió el mensaje:\n" << message.text.data() << std::endl;
+        }
+        
+    }
+    catch (const std::exception& e) {
+        eptr = std::current_exception();
+ 
+    }
+    quit = true;
+}
+
+void request_cancellation(std::thread& thread){
+
+    pthread_cancel(thread.native_handle());
+}
+
+int protected_main(int argc, char* argv[]) {
 
     
-    
-    sockaddr_in local_ip;
-    sockaddr_in dest_ip;
+    std::exception_ptr eptr1 {};
+    std::exception_ptr eptr2 {};
+    std::thread hilo_envio(&thread_send, std::ref(eptr1));
+    std::thread hilo_recibir(&thread_recv, std::ref(eptr2));
 
-    Socket socket(local_ip);
+    while(!quit);
 
-    
+    request_cancellation(hilo_envio);
+    request_cancellation(hilo_recibir);
 
-    local_ip = make_ip_address("127.0.0.0", 2000);
-    dest_ip = make_ip_address("127.0.0.0", 2001);
-    std::string message_text("Hey loco como estas todo bien o que? SI me leistes hasta aqui todo chachi");
+    hilo_envio.join();
+    hilo_recibir.join();
 
-    Message msg;
-    message_text.copy(msg.text.data(), msg.text.size() - 1, 0);
-    socket.send_to(msg, dest_ip);
+    if (eptr1) {
+         std::rethrow_exception(eptr1);
+    }
+    if (eptr2) {
+        std::rethrow_exception(eptr1);
+    }
+}
 
 
-    sockaddr_in remote_address{};    // Porque se recomienda inicializar a 0
-    socklen_t src_len = sizeof(remote_address);
+int main(int argc, char* argv[]) {
 
-    Message message;
-    
-    socket.receive_from(message, local_ip);
-    
-    char *remote_ip = inet_ntoa(remote_address.sin_addr);
-    int remote_port = ntohs(remote_address.sin_port);
-    message.text[1023] = '\0';
-    std::cout << "El sistema " << remote_ip << ":" << remote_port << "envió el mensjae " << message.text.data() << "\n";
-    
+    try {
+        return protected_main(argc, argv);
+    }
+
+    catch(std::bad_alloc& e) {
+        std::cerr << "mytalk" << ": memoria insuficiente\n";
+        return 1;
+    }
+
+    catch(std::system_error& e) {
+        std::cerr << "mytalk" << ": " << e.what() << '\n';
+        return 2;
+    }
+    /*
+    catch (...) {
+        std::cout << "Error desconocido\n";
+        return 99;
+    }*/
+    return 0;
 }
