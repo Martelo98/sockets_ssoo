@@ -10,6 +10,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <string>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -31,30 +32,39 @@ sockaddr_in dest_ip;
 
 // FLAGS
 std::atomic<bool> quit(false);
-bool server_mode = false;
-bool client_mode = false;
 
-void thread_send(std::exception_ptr& eptr) {     // Función de los hilos.
+struct CommandLineArguments {
+    bool show_help = false;
+    bool server_mode = false;
+    bool client_mode = false;
+    int conn_port = 0;
+    std::string conn_ip;
+    std::vector<std::string> other_arguments;
+
+CommandLineArguments(int argc, char* argv[]);
+};
+
+void thread_send(std::exception_ptr& eptr, int port, std::string ip_add) {     // Función de los hilos.
 
     try {
         
         while (comando != "/quit") {
             std::cin >> comando;
             //std::cout << "comando: " << comando;
-          
+            
             local_ip = make_ip_address("127.0.0.1", 5000);
-            dest_ip = make_ip_address("127.0.0.1", 5001);
+            dest_ip = make_ip_address(ip_add, port);
 
             int contenido = 1;
             char buffer[1024]; 
             Message message;
             Socket socket(local_ip);
-            const char* filename = "fichero.txt";
-
-            int fd = open(filename, O_RDONLY); // Abrimos el fichero para lectura y escritura 
-    
+           
+            if (comando != "/quit") {
+            int fd = open(comando.c_str(), O_RDONLY); // Abrimos el fichero para lectura y escritura 
+            
             if( fd == -1 ) {
-                std::cerr << "No se ha podido abrir el fichero" << std::strerror(errno) << '\n';
+                std::cerr << "No se ha podido abrir el fichero " << std::strerror(errno) << '\n';
                 comando = "/quit";
             }
             while (contenido != 0 && comando != "/quit") {
@@ -68,7 +78,7 @@ void thread_send(std::exception_ptr& eptr) {     // Función de los hilos.
             
             close(fd);
         }
-        
+        }
     }
     catch (const std::exception& e) {
         eptr = std::current_exception();
@@ -77,14 +87,14 @@ void thread_send(std::exception_ptr& eptr) {     // Función de los hilos.
     quit = true;
 }
 
-void thread_recv(std::exception_ptr& eptr) {     
+void thread_recv(std::exception_ptr& eptr, int port) {     
 
     try {
-        
         while (comando != "/quit") {
             
             local_ip = make_ip_address("127.0.0.1", 5001);
-            dest_ip = make_ip_address("127.0.0.1", 5000);
+            dest_ip = make_ip_address("127.0.0.1", port);
+            std::cout << "Puerto: " << port << std::endl;
 
             Socket socket(local_ip);
             Message message;
@@ -125,20 +135,11 @@ void int_signal_handler(int signum) {
     }
 }
 
-struct CommandLineArguments
-{
-bool show_help = false;
-bool server_mode = false;
-    unsigned short conn_port = 0;
-std::vector<std::string> other_arguments;
-
-CommandLineArguments(int argc, char* argv[]);
-};
 
 CommandLineArguments::CommandLineArguments(int argc, char *argv[]) {
  
     int c;
-    while ((c = getopt(argc, argv, "hsp:01")) != -1) {
+    while ((c = getopt(argc, argv, "hsc:p:01")) != -1) { // AÑADIR EL DEL CLIENTE
     
         switch (c) {
         
@@ -149,7 +150,7 @@ CommandLineArguments::CommandLineArguments(int argc, char *argv[]) {
                 break;
 
             case 'h':
-                std::cerr << "opción h\n";
+                std::cerr << "--- HELP ---\nForma de ejecutar este programa: ./Netcp [-h ] [-p port] [-s ]\n-h: Muestra la ayuda\n-p: Seguido del argumento 'port' establece dicho número del puerto.\n-s: Inicia en modo servidor.\n";
                 show_help = true;
                 break;
             
@@ -157,10 +158,18 @@ CommandLineArguments::CommandLineArguments(int argc, char *argv[]) {
                 std::cerr << "opción s\n";
                 server_mode = true;
                 break;
+
+            case 'c':
+                std::cerr << "Opción c con ip: " << optarg << std::endl; 
+                client_mode = true;
+                conn_ip = std::string(optarg);
+
+                break;
             
             case 'p':
                 std::cerr << "Opción p con valor " << optarg << std::endl; 
                 conn_port = std::atoi(optarg);
+                
                 break;
             
             case '?':
@@ -182,10 +191,9 @@ CommandLineArguments::CommandLineArguments(int argc, char *argv[]) {
     }   
 }
 
-
-
 int protected_main(int argc, char* argv[]) {
 
+   /*
     std::signal(SIGINT, &int_signal_handler);
     std::signal(SIGTERM, &int_signal_handler);
     std::signal(SIGHUP, &int_signal_handler);
@@ -194,9 +202,9 @@ int protected_main(int argc, char* argv[]) {
     std::exception_ptr eptr2 {};
     std::thread hilo_envio(&thread_send, std::ref(eptr1));
     std::thread hilo_recibir(&thread_recv, std::ref(eptr2));
-
+    
     while(!quit);
-
+    
     request_cancellation(hilo_envio);
     request_cancellation(hilo_recibir);
 
@@ -208,15 +216,61 @@ int protected_main(int argc, char* argv[]) {
     }
     if (eptr2) {
         std::rethrow_exception(eptr1);
+    } */
+   // CommandLineArguments command;
+
+
+
+
+    CommandLineArguments command(argc, argv);
+    if(command.server_mode == true){
+        
+        //std::cout << "Puerto: " << command.conn_port << " Server: " << command.server_mode << std::endl;
+        
+        std::signal(SIGINT, &int_signal_handler);
+        std::signal(SIGTERM, &int_signal_handler);
+        std::signal(SIGHUP, &int_signal_handler);
+        std::exception_ptr eptr1 {};
+        std::thread hilo_recibir(&thread_recv, std::ref(eptr1), std::ref(command.conn_port));
+
+        while(!quit);
+
+        request_cancellation(hilo_recibir);
+        hilo_recibir.join();
+
+        if (eptr1) {
+         std::rethrow_exception(eptr1);
+        }
+
     }
-}
+
+    if(command.client_mode == true){
+
+        std::signal(SIGINT, &int_signal_handler);
+        std::signal(SIGTERM, &int_signal_handler);
+        std::signal(SIGHUP, &int_signal_handler);
+        std::exception_ptr eptr2 {};
+        std::thread hilo_envio(&thread_send, std::ref(eptr2), std::ref(command.conn_port), std::ref(command.conn_ip));
+
+        while(!quit);
+
+        request_cancellation(hilo_envio);
+        hilo_envio.join();
+
+        if (eptr2) {
+         std::rethrow_exception(eptr2);
+        }
+
+    }
+
+}   
 
 
 int main(int argc, char* argv[]) {
 
     try {
         
-        CommandLineArguments arguments(argc, argv);
+        //CommandLineArguments arguments(argc, argv);
         return protected_main(argc, argv);
     }
 
