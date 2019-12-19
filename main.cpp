@@ -23,6 +23,8 @@
 #include <csignal> 
 #include <unistd.h>        // para getopt(), optarg, optind, …
 #include <vector>
+#include <set>
+
 
 #include "socket.hpp"
 
@@ -32,6 +34,8 @@ sockaddr_in dest_ip;
 
 // FLAGS
 std::atomic<bool> quit(false);
+
+std::set<std::pair<int, std::thread *>> active_threads;
 
 struct CommandLineArguments {
     bool show_help = false;
@@ -44,12 +48,13 @@ struct CommandLineArguments {
 CommandLineArguments(int argc, char* argv[]);
 };
 
-void thread_send(std::exception_ptr& eptr, int port, std::string ip_add) {     // Función de los hilos.
+void thread_send(std::exception_ptr& eptr, int port, std::string ip_add, std::string comando) {     // Función de los hilos.
 
+    int contador = 1;
     try {
-        
-        while (comando != "/quit") {
-            std::cin >> comando;
+        int contador = 1;
+       // while (comando != "/quit") {
+            //std::cin >> comando;
             //std::cout << "comando: " << comando;
             
             local_ip = make_ip_address("127.0.0.1", 5000);
@@ -59,32 +64,37 @@ void thread_send(std::exception_ptr& eptr, int port, std::string ip_add) {     /
             char buffer[1024]; 
             Message message;
             Socket socket(local_ip);
+            
            
-            if (comando != "/quit") {
+             //if (comando != "/quit") {
             int fd = open(comando.c_str(), O_RDONLY); // Abrimos el fichero para lectura y escritura 
             
             if( fd == -1 ) {
                 std::cerr << "No se ha podido abrir el fichero " << std::strerror(errno) << '\n';
-                comando = "/quit";
+                //comando = "/quit";
             }
-            while (contenido != 0 && comando != "/quit") {
+            
+            
+            while (contenido != 0) {
                 
                 contenido = read(fd, buffer, 1023);
                 std::string string_contenido(buffer); // Convertimos el char * en string
                 string_contenido.copy(message.text.data(), message.text.size() - 1, 0); // Copiamos los atributos del string hacia nuestra estructura Message
+
                 socket.send_to(message, dest_ip);
+               // socket.send_to(me)
                 
             }
-            
+           // contador++;
             close(fd);
-        }
-        }
+        //}
+      // }
     }
     catch (const std::exception& e) {
         eptr = std::current_exception();
  
     }
-    quit = true;
+    
 }
 
 void thread_recv(std::exception_ptr& eptr, int port) {     
@@ -94,17 +104,20 @@ void thread_recv(std::exception_ptr& eptr, int port) {
             
             local_ip = make_ip_address("127.0.0.1", 5001);
             dest_ip = make_ip_address("127.0.0.1", port);
-            std::cout << "Puerto: " << port << std::endl;
+           // std::cout << "Puerto: " << port << std::endl;
 
             Socket socket(local_ip);
             Message message;
-    
-            socket.receive_from(message, dest_ip);
-    
-            char *remote_ip = inet_ntoa(dest_ip.sin_addr); // Ip desde la que se ha enviado el mensaje
-            int remote_port = ntohs(dest_ip.sin_port);
-    
-            std::cout << "El sistema " << remote_ip << ":" << remote_port << " envió el mensaje:\n" << message.text.data() << std::endl;
+
+            while(true){
+                socket.receive_from(message, dest_ip);
+
+                char *remote_ip = inet_ntoa(dest_ip.sin_addr); // Ip desde la que se ha enviado el mensaje
+                int remote_port = ntohs(dest_ip.sin_port);
+        
+                std::cout << "El sistema " << remote_ip << ":" << remote_port << " envió el fichero:\n" << message.text.data() << std::endl;
+            }
+            
         }
     }
         
@@ -112,7 +125,7 @@ void thread_recv(std::exception_ptr& eptr, int port) {
         eptr = std::current_exception();
  
     }
-    quit = true;
+    
 }
 
 void request_cancellation(std::thread& thread) {
@@ -231,13 +244,22 @@ int protected_main(int argc, char* argv[]) {
         std::signal(SIGTERM, &int_signal_handler);
         std::signal(SIGHUP, &int_signal_handler);
         std::exception_ptr eptr1 {};
-        std::thread hilo_recibir(&thread_recv, std::ref(eptr1), std::ref(command.conn_port));
 
-        while(!quit);
+        
+            std::thread hilo_recibir(&thread_recv, std::ref(eptr1), std::ref(command.conn_port));
+            while(!quit);
+            request_cancellation(hilo_recibir);
+            hilo_recibir.join();
 
-        request_cancellation(hilo_recibir);
-        hilo_recibir.join();
+              
+          
+           
+        
 
+
+//        while(!quit);
+
+       
         if (eptr1) {
          std::rethrow_exception(eptr1);
         }
@@ -250,13 +272,23 @@ int protected_main(int argc, char* argv[]) {
         std::signal(SIGTERM, &int_signal_handler);
         std::signal(SIGHUP, &int_signal_handler);
         std::exception_ptr eptr2 {};
-        std::thread hilo_envio(&thread_send, std::ref(eptr2), std::ref(command.conn_port), std::ref(command.conn_ip));
+       // std::thread hilo_envio(&thread_send, std::ref(eptr2), std::ref(command.conn_port), std::ref(command.conn_ip));
 
-        while(!quit);
-
+        while(!quit) {
+            std::string filename;
+            std::cin >> filename;
+            std::string aux = filename;
+            
+            if(aux != "/quit") {
+                std::thread* puntero_hilo = new std::thread(&thread_send, std::ref(eptr2), std::ref(command.conn_port), std::ref(command.conn_ip), std::ref(aux));
+            }else{
+                quit = true;
+            }
+        }
+/*
         request_cancellation(hilo_envio);
         hilo_envio.join();
-
+*/
         if (eptr2) {
          std::rethrow_exception(eptr2);
         }

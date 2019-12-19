@@ -13,7 +13,12 @@
 
 struct Message {        // Estructura del mensaje
 
+    int identificador;
+    std::string nombreArchivo; 
+    int tipoMensaje;
     std::array<char, 1024> text;
+
+
 };
 
 sockaddr_in make_ip_address(const std::string& ip_address, int port);
